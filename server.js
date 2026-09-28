@@ -7,8 +7,12 @@ app.set('trust proxy', 1); // Railway fica atrás de proxy
 app.use(express.json());
 app.use(express.static('public'));
 
-const MODEL = process.env.MODEL || 'claude-sonnet-5';
+const MODEL = process.env.MODEL || 'claude-haiku-4-5-20251001';
 const KEY = process.env.ANTHROPIC_API_KEY;
+if (!KEY) {
+  console.error('ERRO: variável ANTHROPIC_API_KEY não definida. No Railway, adicione-a nas Variables do serviço do app.');
+  process.exit(1);
+}
 
 // AJUSTE quando o edital da AOCP sair (matérias, quantidades e assuntos).
 // Distribuição inicial é uma estimativa: total de 60 questões.
@@ -27,11 +31,23 @@ Responda SOMENTE com um array JSON, sem texto extra e sem crases.`;
 
 const sessoes = new Map();
 
-// Postgres do Railway: a variável DATABASE_URL é preenchida ao adicionar o plugin.
+// Postgres do Railway: a variável DATABASE_URL é preenchida ao adicionar o plugin
+// (no serviço do app, referencie como DATABASE_URL=${{Postgres.DATABASE_URL}}).
+if (!process.env.DATABASE_URL) {
+  console.error('ERRO: variável DATABASE_URL não definida. No Railway, adicione um Postgres ao projeto e, nas Variables do serviço do app, defina DATABASE_URL=${{<nome-do-serviço-postgres>.DATABASE_URL}}.');
+  process.exit(1);
+}
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-await pool.query(`CREATE TABLE IF NOT EXISTS usuarios(id SERIAL PRIMARY KEY, telefone TEXT UNIQUE NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL);
+try {
+  await pool.query(`CREATE TABLE IF NOT EXISTS usuarios(id SERIAL PRIMARY KEY, telefone TEXT UNIQUE NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, usuario INTEGER NOT NULL, criado BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS resultados(id SERIAL PRIMARY KEY, usuario INTEGER NOT NULL, data BIGINT NOT NULL, acertos INTEGER NOT NULL, total INTEGER NOT NULL, detalhe TEXT)`);
+} catch (e) {
+  console.error('ERRO ao conectar no Postgres. Confira se DATABASE_URL aponta para o serviço certo e se o Postgres está no mesmo projeto do Railway.');
+  console.error(e.message);
+  process.exit(1);
+}
+pool.on('error', (e) => console.error('Erro no pool do Postgres:', e.message));
 
 const hashSenha = (senha, salt) => crypto.scryptSync(senha, salt, 64).toString('hex');
 const soDigitos = (t) => String(t || '').replace(/\D/g, '');
@@ -129,11 +145,22 @@ Formato: [{"enunciado":"...","alternativas":["...","...","...","...","..."],"cor
         body: JSON.stringify({ model: MODEL, max_tokens: 8000, system: SYSTEM, messages: [{ role: 'user', content: prompt }] }),
       });
       const d = await r.json();
+      if (!r.ok) {
+        console.error(`[${materia}] API respondeu ${r.status}:`, JSON.stringify(d).slice(0, 500));
+        continue;
+      }
       const txt = d.content.map((c) => c.text || '').join('').replace(/```json|```/g, '').trim();
-      const qs = JSON.parse(txt).filter(valida).slice(0, qtd);
+      let qs;
+      try {
+        qs = JSON.parse(txt).filter(valida).slice(0, qtd);
+      } catch (e) {
+        console.error(`[${materia}] JSON inválido na resposta:`, e.message, '| início do texto:', txt.slice(0, 300));
+        continue;
+      }
       if (qs.length) return qs.map((q) => ({ ...embaralha(q), materia }));
+      console.error(`[${materia}] Nenhuma questão válida no lote (${JSON.parse(txt).length} recebidas).`);
     } catch (e) {
-      console.error(materia, e.message);
+      console.error(`[${materia}] Falha na chamada:`, e.message);
     }
   }
   return [];
