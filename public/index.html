@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulado PM-PE Soldado</title>
+<style>
+:root{--bg:#eef1f5;--ink:#101828;--mut:#5b6472;--ac:#1d4ed8;--ok:#15803d;--er:#b91c1c;--line:#cfd6e0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.55 Georgia,serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 90px}
+h1{font-size:1.6rem;margin:.2em 0}
+.mut{color:var(--mut);font-size:.9rem}
+button{font:inherit;padding:12px 18px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:#fff;cursor:pointer}
+button.sec{background:#fff;color:var(--ac)}
+button:disabled{opacity:.4}
+button:focus-visible,label:focus-within{outline:3px solid #93b4ff;outline-offset:2px}
+.bar{height:6px;background:var(--line);border-radius:3px;margin:12px 0}
+.bar i{display:block;height:100%;background:var(--ac);border-radius:3px}
+label{display:flex;gap:10px;padding:12px;margin:8px 0;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer}
+label.on{border-color:var(--ac);background:#e8efff}
+.nav{display:flex;justify-content:space-between;margin-top:18px}
+.q{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;margin:14px 0}
+.ok{color:var(--ok)}.er{color:var(--er)}
+.nota{font-size:2.6rem;margin:.1em 0}
+input.c{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px;margin:6px 0}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const app = document.getElementById('app');
+const L = 'ABCDE';
+let S = { id: null, qs: [], i: 0, resp: {} };
+const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+async function inicio(erro = '') {
+  const r = await fetch('/api/historico');
+  if (r.status === 401) return login(erro);
+  const h = await r.json();
+  app.innerHTML = `<h1>Simulado PM-PE · Soldado</h1>
+  <p class="mut">Questões inéditas geradas por IA a cada simulado, no estilo AOCP. O gabarito aparece só no final.</p>
+  ${erro ? `<p class="er">${esc(erro)}</p>` : ''}
+  <button id="go">Iniciar simulado</button> <button class="sec" id="sair">Sair</button>
+  ${h.length ? `<h2>Seus simulados</h2>${h.map((x) => `<div class="q">${new Date(x.data).toLocaleDateString('pt-BR')} · <b>${x.acertos}/${x.total}</b></div>`).join('')}` : ''}`;
+  document.getElementById('go').onclick = iniciar;
+  document.getElementById('sair').onclick = async () => { await fetch('/api/sair', { method: 'POST' }); inicio(); };
+}
+
+function login(erro = '') {
+  app.innerHTML = `<h1>Simulado PM-PE · Soldado</h1>
+  <p class="mut">Entre com seu telefone e senha para salvar seu histórico.</p>
+  ${erro ? `<p class="er">${esc(erro)}</p>` : ''}
+  <input class="c" id="tel" type="tel" autocomplete="tel" placeholder="Telefone com DDD">
+  <input class="c" id="senha" type="password" autocomplete="current-password" placeholder="Senha (mínimo 6 caracteres)">
+  <button id="entrar">Entrar</button> <button class="sec" id="criar">Criar conta</button>`;
+  const enviar = async (rota) => {
+    const r = await fetch('/api/' + rota, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ telefone: document.getElementById('tel').value, senha: document.getElementById('senha').value }) });
+    const d = await r.json();
+    r.ok ? inicio() : login(d.erro);
+  };
+  document.getElementById('entrar').onclick = () => enviar('login');
+  document.getElementById('criar').onclick = () => enviar('cadastro');
+}
+
+async function iniciar() {
+  app.innerHTML = '<p>Gerando as questões... isso leva cerca de um minuto.</p>';
+  try {
+    const r = await fetch('/api/simulado', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) return inicio(d.erro);
+    S = { id: d.id, qs: d.questoes, i: 0, resp: {} };
+    questao();
+  } catch { inicio('Falha de conexão. Tente de novo.'); }
+}
+
+function questao() {
+  const q = S.qs[S.i], n = S.qs.length, marc = S.resp[q.id];
+  app.innerHTML = `<div class="mut">${esc(q.materia)} · questão ${S.i + 1} de ${n}</div>
+  <div class="bar"><i style="width:${((S.i + 1) / n) * 100}%"></i></div>
+  <p>${esc(q.enunciado)}</p>
+  ${q.alternativas.map((a, k) => `<label class="${marc === k ? 'on' : ''}"><input type="radio" name="a" value="${k}" ${marc === k ? 'checked' : ''}><span><b>${L[k]})</b> ${esc(a)}</span></label>`).join('')}
+  <div class="nav">
+    <button class="sec" id="prev" ${S.i === 0 ? 'disabled' : ''}>Anterior</button>
+    ${S.i < n - 1 ? '<button id="next">Próxima</button>' : '<button id="fim">Finalizar</button>'}
+  </div>`;
+  app.querySelectorAll('input').forEach((el) => (el.onchange = () => { S.resp[q.id] = +el.value; questao(); }));
+  document.getElementById('prev').onclick = () => { S.i--; questao(); };
+  const nx = document.getElementById('next'); if (nx) nx.onclick = () => { S.i++; questao(); };
+  const fm = document.getElementById('fim'); if (fm) fm.onclick = finalizar;
+}
+
+async function finalizar() {
+  const faltam = S.qs.length - Object.keys(S.resp).length;
+  if (faltam && !confirm(`Faltam ${faltam} questões sem resposta. Finalizar mesmo assim?`)) return;
+  const r = await fetch('/api/gabarito', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: S.id, respostas: S.resp }) });
+  const d = await r.json();
+  if (!r.ok) return inicio(d.erro);
+  resultado(d);
+}
+
+function resultado(d) {
+  app.innerHTML = `<h1>Resultado</h1>
+  <div class="nota">${d.acertos}/${d.total}</div>
+  <p class="mut">${Object.entries(d.porMateria).map(([m, v]) => `${esc(m)}: ${v.acertos}/${v.total}`).join(' · ')}</p>
+  <button id="novo">Novo simulado</button>
+  ${d.itens.map((q, n) => `<div class="q">
+    <div class="mut">${n + 1}. ${esc(q.materia)} · <b class="${q.acertou ? 'ok' : 'er'}">${q.acertou ? 'Acertou' : q.marcada === null ? 'Em branco' : 'Errou'}</b></div>
+    <p>${esc(q.enunciado)}</p>
+    ${q.alternativas.map((a, k) => `<div class="${k === q.correta ? 'ok' : k === q.marcada ? 'er' : ''}">${k === q.correta ? '✓' : k === q.marcada ? '✗' : '&nbsp;'} <b>${L[k]})</b> ${esc(a)}</div>`).join('')}
+    <p class="mut">Gabarito: ${L[q.correta]}. ${esc(q.explicacao)}</p></div>`).join('')}`;
+  document.getElementById('novo').onclick = () => inicio();
+}
+
+inicio();
+</script>
+</body>
+</html>
