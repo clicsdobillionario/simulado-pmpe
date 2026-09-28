@@ -9,7 +9,7 @@ app.use(express.static('public'));
 
 // Lista de modelos, em ordem de preferência. Se um estiver sobrecarregado (503),
 // tenta o próximo da lista antes de desistir da matéria. Ajuste via MODELS (separado por vírgula).
-const MODELS = (process.env.MODELS || 'gemini-3.8-flash,gemini-flash-latest,gemini-2.5-flash,gemini-2.0-flash').split(',').map((m) => m.trim());
+const MODELS = (process.env.MODELS || 'gemini-3.8-flash,gemini-flash-latest,gemini-flash-lite-latest').split(',').map((m) => m.trim());
 const KEY = process.env.GEMINI_API_KEY;
 if (!KEY) {
   console.error('ERRO: variável GEMINI_API_KEY não definida. Gere uma chave gratuita em https://aistudio.google.com/apikey e adicione-a nas Variables do serviço do app no Railway.');
