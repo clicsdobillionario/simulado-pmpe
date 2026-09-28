@@ -7,10 +7,10 @@ app.set('trust proxy', 1); // Railway fica atrás de proxy
 app.use(express.json());
 app.use(express.static('public'));
 
-const MODEL = process.env.MODEL || 'gemini-2.5-flash';
-const KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.MODEL || 'claude-haiku-4-5-20251001';
+const KEY = process.env.ANTHROPIC_API_KEY;
 if (!KEY) {
-  console.error('ERRO: variável GEMINI_API_KEY não definida. Gere uma chave gratuita em https://aistudio.google.com/apikey e adicione-a nas Variables do serviço do app no Railway.');
+  console.error('ERRO: variável ANTHROPIC_API_KEY não definida. No Railway, adicione-a nas Variables do serviço do app.');
   process.exit(1);
 }
 
@@ -137,29 +137,19 @@ Regras: exatamente uma alternativa correta; sem "todas as anteriores"; distrator
 Formato: [{"enunciado":"...","alternativas":["...","...","...","...","..."],"correta":0,"explicacao":"1-2 frases"}]
 "correta" é o índice (0 a 4) da alternativa certa.`;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
   for (let tentativa = 0; tentativa < 2; tentativa++) {
     try {
-      const r = await fetch(url, {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM }] },
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8000 },
-        }),
+        headers: { 'content-type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: MODEL, max_tokens: 8000, system: SYSTEM, messages: [{ role: 'user', content: prompt }] }),
       });
       const d = await r.json();
       if (!r.ok) {
         console.error(`[${materia}] API respondeu ${r.status}:`, JSON.stringify(d).slice(0, 500));
         continue;
       }
-      const cand = d.candidates?.[0];
-      const txt = (cand?.content?.parts || []).map((p) => p.text || '').join('').replace(/```json|```/g, '').trim();
-      if (!txt) {
-        console.error(`[${materia}] Resposta vazia. finishReason:`, cand?.finishReason, '| corpo:', JSON.stringify(d).slice(0, 300));
-        continue;
-      }
+      const txt = d.content.map((c) => c.text || '').join('').replace(/```json|```/g, '').trim();
       let qs;
       try {
         qs = JSON.parse(txt).filter(valida).slice(0, qtd);
@@ -168,7 +158,7 @@ Formato: [{"enunciado":"...","alternativas":["...","...","...","...","..."],"cor
         continue;
       }
       if (qs.length) return qs.map((q) => ({ ...embaralha(q), materia }));
-      console.error(`[${materia}] Nenhuma questão válida no lote.`);
+      console.error(`[${materia}] Nenhuma questão válida no lote (${JSON.parse(txt).length} recebidas).`);
     } catch (e) {
       console.error(`[${materia}] Falha na chamada:`, e.message);
     }
