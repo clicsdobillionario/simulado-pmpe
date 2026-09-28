@@ -7,7 +7,9 @@ app.set('trust proxy', 1); // Railway fica atrás de proxy
 app.use(express.json());
 app.use(express.static('public'));
 
-const MODEL = process.env.MODEL || 'gemini-3.8-flash';
+// Lista de modelos, em ordem de preferência. Se um estiver sobrecarregado (503),
+// tenta o próximo da lista antes de desistir da matéria. Ajuste via MODELS (separado por vírgula).
+const MODELS = (process.env.MODELS || 'gemini-3.8-flash,gemini-flash-latest,gemini-2.5-flash,gemini-2.0-flash').split(',').map((m) => m.trim());
 const KEY = process.env.GEMINI_API_KEY;
 if (!KEY) {
   console.error('ERRO: variável GEMINI_API_KEY não definida. Gere uma chave gratuita em https://aistudio.google.com/apikey e adicione-a nas Variables do serviço do app no Railway.');
@@ -137,10 +139,12 @@ Regras: exatamente uma alternativa correta; sem "todas as anteriores"; distrator
 Formato: [{"enunciado":"...","alternativas":["...","...","...","...","..."],"correta":0,"explicacao":"1-2 frases"}]
 "correta" é o índice (0 a 4) da alternativa certa.`;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
   const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 
   for (let tentativa = 0; tentativa < 5; tentativa++) {
+    // Roda pela lista de modelos: tentativa 0 usa o 1º, tentativa 1 o 2º, e assim por diante (repete o último).
+    const modelo = MODELS[Math.min(tentativa, MODELS.length - 1)];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${KEY}`;
     try {
       const r = await fetch(url, {
         method: 'POST',
@@ -157,7 +161,7 @@ Formato: [{"enunciado":"...","alternativas":["...","...","...","...","..."],"cor
         if (r.status === 429 || r.status === 503) {
           const m = /retry in ([\d.]+)s/i.exec(d?.error?.message || '');
           const espera = m ? Math.ceil(parseFloat(m[1]) * 1000) + 500 : 3000 * (tentativa + 1);
-          console.error(`[${materia}] ${r.status}, tentando de novo em ${espera}ms (tentativa ${tentativa + 1}/5)`);
+          console.error(`[${materia}] ${modelo} respondeu ${r.status}, tentando de novo em ${espera}ms com ${MODELS[Math.min(tentativa + 1, MODELS.length - 1)]} (tentativa ${tentativa + 1}/5)`);
           await dormir(espera);
           continue;
         }
