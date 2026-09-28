@@ -138,7 +138,9 @@ Formato: [{"enunciado":"...","alternativas":["...","...","...","...","..."],"cor
 "correta" é o índice (0 a 4) da alternativa certa.`;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
-  for (let tentativa = 0; tentativa < 2; tentativa++) {
+  const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  for (let tentativa = 0; tentativa < 5; tentativa++) {
     try {
       const r = await fetch(url, {
         method: 'POST',
@@ -151,33 +153,50 @@ Formato: [{"enunciado":"...","alternativas":["...","...","...","...","..."],"cor
       });
       const d = await r.json();
       if (!r.ok) {
+        // 429 (cota) e 503 (sobrecarga) valem tentar de novo, com o tempo que a própria API sugerir.
+        if (r.status === 429 || r.status === 503) {
+          const m = /retry in ([\d.]+)s/i.exec(d?.error?.message || '');
+          const espera = m ? Math.ceil(parseFloat(m[1]) * 1000) + 500 : 3000 * (tentativa + 1);
+          console.error(`[${materia}] ${r.status}, tentando de novo em ${espera}ms (tentativa ${tentativa + 1}/5)`);
+          await dormir(espera);
+          continue;
+        }
         console.error(`[${materia}] API respondeu ${r.status}:`, JSON.stringify(d).slice(0, 500));
-        continue;
+        return [];
       }
       const cand = d.candidates?.[0];
       const txt = (cand?.content?.parts || []).map((p) => p.text || '').join('').replace(/```json|```/g, '').trim();
       if (!txt) {
         console.error(`[${materia}] Resposta vazia. finishReason:`, cand?.finishReason, '| corpo:', JSON.stringify(d).slice(0, 300));
-        continue;
+        return [];
       }
       let qs;
       try {
         qs = JSON.parse(txt).filter(valida).slice(0, qtd);
       } catch (e) {
         console.error(`[${materia}] JSON inválido na resposta:`, e.message, '| início do texto:', txt.slice(0, 300));
-        continue;
+        return [];
       }
       if (qs.length) return qs.map((q) => ({ ...embaralha(q), materia }));
       console.error(`[${materia}] Nenhuma questão válida no lote.`);
+      return [];
     } catch (e) {
       console.error(`[${materia}] Falha na chamada:`, e.message);
+      return [];
     }
   }
+  console.error(`[${materia}] Desistiu após 5 tentativas.`);
   return [];
 }
 
+// Cota gratuita do Gemini é baixa (poucas req/min): gera uma matéria por vez, com espaçamento.
 app.post('/api/simulado', auth, async (req, res) => {
-  const qs = (await Promise.all(PROVA.map(gerar))).flat().map((q, i) => ({ ...q, id: i }));
+  const todas = [];
+  for (const materia of PROVA) {
+    todas.push(...(await gerar(materia)));
+    await new Promise((r) => setTimeout(r, 13000));
+  }
+  const qs = todas.map((q, i) => ({ ...q, id: i }));
   if (!qs.length) return res.status(502).json({ erro: 'Não foi possível gerar as questões. Tente de novo.' });
   const id = crypto.randomUUID();
   sessoes.set(id, { uid: req.uid, qs });
