@@ -7,7 +7,7 @@ app.set('trust proxy', 1); // Railway fica atrás de proxy
 app.use(express.json());
 app.use(express.static('public'));
 
-const MODEL = process.env.MODEL || 'gemini-2.5-flash';
+const MODEL = process.env.MODEL || 'gemini-3.8-flash';
 const KEY = process.env.GEMINI_API_KEY;
 if (!KEY) {
   console.error('ERRO: variável GEMINI_API_KEY não definida. Gere uma chave gratuita em https://aistudio.google.com/apikey e adicione-a nas Variables do serviço do app no Railway.');
